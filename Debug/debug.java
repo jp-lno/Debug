@@ -1,39 +1,23 @@
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
-
 import java.io.File;
-import java.nio.file.Path;
+import java.io.IOException;
+import java.nio.file.Files;
 
-import static org.junit.jupiter.api.Assertions.*;
+@Test
+public void testCreateTempFileFromBytes() throws IOException {
+    byte[] data = "hello, world".getBytes();
 
-class FileUtilsTest {
+    YourClass yourClass = new YourClass()
+    File tempFile = yourClass.createTempFileFromBytes(data);
 
-    @TempDir
-    static Path tempDir;  // Folder that JUnit creates and deletes per test case
+    Assertions.assertTrue(tempFile.exists(), "File should exist");
+    Assertions.assertArrayEquals(data, Files.readAllBytes(tempFile.toPath()), "File content should match data");
+}
 
-    @Test
-    void testDeleteExistingFile() throws Exception {
-        // Arrange
-        File fileToDel = tempDir.resolve("testfile.txt").toFile();
-        assertTrue(fileToDel.createNewFile()); // Ensure the file we want to delete exists
+@Test
+public void testCreateTempFileFromBytesError() {
+    YourClass yourClass = new YourClass();
+    yourClass.setInvalidTempFilePath();  // Mandate a method/way to set an invalid temp file path for this test.
+    byte[] data = "hello, world".getBytes();
 
-        // Act
-        boolean result = FileUtils.deleteFile(fileToDel);
-
-        // Assert
-        assertTrue(result, "Expected successful deletion");
-        assertFalse(fileToDel.exists(), "Expected file to be deleted");
-    }
-
-    @Test
-    void testDeleteNonExistingFile() {
-        // Arrange
-        File nonExistingFile = tempDir.resolve("nonExistingFile.txt").toFile();
-
-        // Act
-        boolean result = FileUtils.deleteFile(nonExistingFile);
-
-        // Assert
-        assertFalse(result, "Expected unsuccessful deletion");
-    }
+    Assertions.assertThrows(IOException.class, () -> yourClass.createTempFileFromBytes(data));
 }
