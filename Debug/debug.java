@@ -1,96 +1,112 @@
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+
+import javax.naming.directory.Attributes;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.*;
 import org.mockito.junit.jupiter.MockitoExtension;
-
-import reactor.core.publisher.*;
-import reactor.test.StepVerifier;
+import org.springframework.ldap.core.LdapTemplate;
+import org.springframework.ldap.core.AttributesMapper;
+import org.springframework.ldap.query.LdapQueryBuilder;
+import org.springframework.ldap.query.LdapQuery;
 
 @ExtendWith(MockitoExtension.class)
-public class DocumentRequestValidatorTest {
+public class LdapUtilsTest {
 
     @Mock
-    private CustomMetadataTypeRepository metadataTypeRepository;
+    private LdapTemplate ldapTemplate;
 
-    @InjectMocks
-    private DocumentRequestValidator documentRequestValidator;
+    @Mock
+    private LdapConfigParams ldapConfigParams;
 
-    private UUID documentTypeUUID;
-    private List<MetadataDTO> reqMetadata;
-    private List<MetadataType> supportedMetadataTypesForDocumentType;
+    @Mock
+    private LdapQueryBuilder queryBuilder;
+
+    private static final String USERNAME = "testUser";
+    private static final String DISTINGUISHED_NAME = "cn=testUser,dc=example,dc=com";
 
     @BeforeEach
     void setUp() {
-        documentTypeUUID = UUID.randomUUID();
-        reqMetadata = List.of(
-                new MetadataDTO("code1", "value1"),
-                new MetadataDTO("code2", "value2")
-        );
-        supportedMetadataTypesForDocumentType = List.of(
-                new MetadataType("code1", true, null, null),
-                new MetadataType("code2", false, ".*", RegexTypeEnum.STRING)
-        );
+        when(ldapConfigParams.getGroupBase()).thenReturn("ou=groups");
+        when(ldapConfigParams.getQueryAttributes()).thenReturn(new QueryAttributes());
+        when(ldapConfigParams.getUserBases()).thenReturn(new String[]{"ou=users"});
+        when(ldapConfigParams.getPrefix()).thenReturn("prefix");
+        when(ldapConfigParams.getSuffix()).thenReturn("suffix");
     }
 
     @Test
-    void testValidateMetadataSuccess() {
-        when(metadataTypeRepository.findAllByDocumentType(documentTypeUUID))
-                .thenReturn(Flux.fromIterable(supportedMetadataTypesForDocumentType));
+    void testSearchGroupsByUsernameFiltered() {
+        List<String> groups = List.of("prefixGroup1suffix", "prefixGroup2suffix", "Group3");
 
-        Mono<Void> result = documentRequestValidator.validateMetadata(reqMetadata, documentTypeUUID);
+        // Mock the searchGroupsByUsername method
+        try (MockedStatic<LdapUtils> mockedLdapUtils = mockStatic(LdapUtils.class)) {
+            mockedLdapUtils.when(() -> LdapUtils.searchGroupsByUsername(any(), any(), any()))
+                    .thenReturn(groups);
 
-        StepVerifier.create(result)
-                .verifyComplete();
+            List<String> filteredGroups = LdapUtils.searchGroupsByUsernameFiltered(ldapTemplate, ldapConfigParams, USERNAME);
+
+            assertEquals(2, filteredGroups.size());
+            assertTrue(filteredGroups.contains("prefixGroup1suffix"));
+            assertTrue(filteredGroups.contains("prefixGroup2suffix"));
+        }
     }
 
     @Test
-    void testValidateMetadataWithNonSupportedType() {
-        reqMetadata = List.of(new MetadataDTO("code3", "value3"));
+    void testSearchGroupsByUsername() {
+        List<String> groups = List.of("group1", "group2");
 
-        when(metadataTypeRepository.findAllByDocumentType(documentTypeUUID))
-                .thenReturn(Flux.fromIterable(supportedMetadataTypesForDocumentType));
+        try (MockedStatic<LdapUtils> mockedLdapUtils = mockStatic(LdapUtils.class)) {
+            mockedLdapUtils.when(() -> LdapUtils.getDistinguishedName(any(), any(), any()))
+                    .thenReturn(DISTINGUISHED_NAME);
+            mockedLdapUtils.when(() -> LdapUtils.searchGroupsOfDistinguishedName(any(), any(), any()))
+                    .thenReturn(groups);
 
-        Mono<Void> result = documentRequestValidator.validateMetadata(reqMetadata, documentTypeUUID);
+            List<String> result = LdapUtils.searchGroupsByUsername(ldapTemplate, ldapConfigParams, USERNAME);
 
-        StepVerifier.create(result)
-                .expectError(BadRequestException.class)
-                .verify();
+            assertEquals(groups, result);
+        }
     }
 
     @Test
-    void testValidateMetadataWithMandatoryTypeMissing() {
-        supportedMetadataTypesForDocumentType = List.of(
-                new MetadataType("code1", true, null, null)
-        );
+    void testSearchGroupsByUsernameWithNoDistinguishedName() {
+        try (MockedStatic<LdapUtils> mockedLdapUtils = mockStatic(LdapUtils.class)) {
+            mockedLdapUtils.when(() -> LdapUtils.getDistinguishedName(any(), any(), any()))
+                    .thenReturn(null);
 
-        when(metadataTypeRepository.findAllByDocumentType(documentTypeUUID))
-                .thenReturn(Flux.fromIterable(supportedMetadataTypesForDocumentType));
+            List<String> result = LdapUtils.searchGroupsByUsername(ldapTemplate, ldapConfigParams, USERNAME);
 
-        Mono<Void> result = documentRequestValidator.validateMetadata(reqMetadata, documentTypeUUID);
-
-        StepVerifier.create(result)
-                .expectError(BadRequestException.class)
-                .verify();
+            assertTrue(result.isEmpty());
+        }
     }
 
     @Test
-    void testValidateMetadataWithInvalidRegex() {
-        reqMetadata = List.of(new MetadataDTO("code2", "invalidValue"));
+    void testGetDistinguishedName() {
+        List<String> distinguishedNames = List.of(DISTINGUISHED_NAME);
 
-        when(metadataTypeRepository.findAllByDocumentType(documentTypeUUID))
-                .thenReturn(Flux.fromIterable(supportedMetadataTypesForDocumentType));
+        when(ldapTemplate.search(any(LdapQuery.class), any(AttributesMapper.class)))
+                .thenReturn(distinguishedNames);
 
-        Mono<Void> result = documentRequestValidator.validateMetadata(reqMetadata, documentTypeUUID);
+        String result = LdapUtils.getDistinguishedName(ldapTemplate, ldapConfigParams, USERNAME);
 
-        StepVerifier.create(result)
-                .expectError(BadRequestException.class)
-                .verify();
+        assertEquals(DISTINGUISHED_NAME, result);
+    }
+
+    @Test
+    void testGetDistinguishedNameNotFound() {
+        when(ldapTemplate.search(any(LdapQuery.class), any(AttributesMapper.class)))
+                .thenReturn(Collections.emptyList());
+
+        Exception exception = assertThrows(ForbiddenException.class, () ->
+                LdapUtils.getDistinguishedName(ldapTemplate, ldapConfigParams, USERNAME));
+
+        assertTrue(exception.getMessage().contains("Username not found"));
     }
 }
