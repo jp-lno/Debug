@@ -1,47 +1,96 @@
-package Debug;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
-import java.net.URI;
+import java.util.*;
+import java.util.stream.Collectors;
 
-public class debug {
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.*;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-    @Test
-    void status() {
-        Error error = new Error();
-        error.status(404);
-        assertEquals(404, error.getStatus());
+import reactor.core.publisher.*;
+import reactor.test.StepVerifier;
+
+@ExtendWith(MockitoExtension.class)
+public class DocumentRequestValidatorTest {
+
+    @Mock
+    private CustomMetadataTypeRepository metadataTypeRepository;
+
+    @InjectMocks
+    private DocumentRequestValidator documentRequestValidator;
+
+    private UUID documentTypeUUID;
+    private List<MetadataDTO> reqMetadata;
+    private List<MetadataType> supportedMetadataTypesForDocumentType;
+
+    @BeforeEach
+    void setUp() {
+        documentTypeUUID = UUID.randomUUID();
+        reqMetadata = List.of(
+                new MetadataDTO("code1", "value1"),
+                new MetadataDTO("code2", "value2")
+        );
+        supportedMetadataTypesForDocumentType = List.of(
+                new MetadataType("code1", true, null, null),
+                new MetadataType("code2", false, ".*", RegexTypeEnum.STRING)
+        );
     }
 
     @Test
-    void getType() {
-        Error error = new Error();
-        error.type(URI.create("http://example.com"));
-        assertEquals(URI.create("http://example.com"), error.getType());
+    void testValidateMetadataSuccess() {
+        when(metadataTypeRepository.findAllByDocumentType(documentTypeUUID))
+                .thenReturn(Flux.fromIterable(supportedMetadataTypesForDocumentType));
+
+        Mono<Void> result = documentRequestValidator.validateMetadata(reqMetadata, documentTypeUUID);
+
+        StepVerifier.create(result)
+                .verifyComplete();
     }
 
     @Test
-    void title() {
-        Error error = new Error();
-        error.title("Some error occurred");
-        assertEquals("Some error occurred", error.getTitle());
+    void testValidateMetadataWithNonSupportedType() {
+        reqMetadata = List.of(new MetadataDTO("code3", "value3"));
+
+        when(metadataTypeRepository.findAllByDocumentType(documentTypeUUID))
+                .thenReturn(Flux.fromIterable(supportedMetadataTypesForDocumentType));
+
+        Mono<Void> result = documentRequestValidator.validateMetadata(reqMetadata, documentTypeUUID);
+
+        StepVerifier.create(result)
+                .expectError(BadRequestException.class)
+                .verify();
     }
 
     @Test
-    void detail() {
-        Error error = new Error();
-        error.detail("TestDetail");
-        assertEquals("TestDetail", error.getDetail());
+    void testValidateMetadataWithMandatoryTypeMissing() {
+        supportedMetadataTypesForDocumentType = List.of(
+                new MetadataType("code1", true, null, null)
+        );
+
+        when(metadataTypeRepository.findAllByDocumentType(documentTypeUUID))
+                .thenReturn(Flux.fromIterable(supportedMetadataTypesForDocumentType));
+
+        Mono<Void> result = documentRequestValidator.validateMetadata(reqMetadata, documentTypeUUID);
+
+        StepVerifier.create(result)
+                .expectError(BadRequestException.class)
+                .verify();
     }
 
     @Test
-    void objectMethods() {
-        Error error1 = new Error().status(200).type(URI.create("http://example.com")).title("title").detail("detail");
-        Error error2 = new Error().status(200).type(URI.create("http://example.com")).title("title").detail("detail");
-        Error error3 = new Error().status(404).type(URI.create("http://test.com")).title("test").detail("test");
+    void testValidateMetadataWithInvalidRegex() {
+        reqMetadata = List.of(new MetadataDTO("code2", "invalidValue"));
 
-        assertEquals(error1, error2);
-        assertNotEquals(error1, error3);
-        assertEquals(error1.hashCode(), error2.hashCode());
-        assertNotEquals(error1.hashCode(), error3.hashCode());
-        assertTrue(error1.toString().contains("200"));
+        when(metadataTypeRepository.findAllByDocumentType(documentTypeUUID))
+                .thenReturn(Flux.fromIterable(supportedMetadataTypesForDocumentType));
+
+        Mono<Void> result = documentRequestValidator.validateMetadata(reqMetadata, documentTypeUUID);
+
+        StepVerifier.create(result)
+                .expectError(BadRequestException.class)
+                .verify();
     }
 }
